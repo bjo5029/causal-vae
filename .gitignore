@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data
+data/
+datasets/
+
+# Models
+checkpoints/
+*.pt
+*.ckpt
+
+# Logs
+logs/
+wandb/
+
+# OS
+.DS_Store
+
+refs/
+*.txt
+checkpoints/
+results/
