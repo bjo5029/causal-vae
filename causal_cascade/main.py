@@ -10,14 +10,13 @@ import os
 # ============ 설정 ============
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-CSV_PATH = "/home/jeongeun.baek/workspace/causal-vae/data/vessel_analysis_result.csv"
+CSV_PATH = "../data/vessel_analysis_result.csv"
 IMG_ROOTS = [
-    "/home/jeongeun.baek/workspace/causal-vae/data/Plate-25250_A11-H11",  
-    "??" 
+    "../data/Plate-25250_A11-H11",  
+    "../data/Plate-25251_A11-H11" 
 ]
 
-# 이미지 크기 설정 (비율 유지 권장)
-# 원본 비율(1:1.66) 고려하여 (384, 640) 추천. OOM나면 (256, 426)
+# 이미지 크기 설정
 TARGET_SIZE = (512, 960) 
 
 BATCH_SIZE = 8   
@@ -30,8 +29,8 @@ def main():
     os.makedirs('./checkpoints', exist_ok=True)
     os.makedirs('./results', exist_ok=True)
 
-    print(f"Loading Data from {IMG_ROOT}...")
-    dataset = CausalDataset(CSV_PATH, IMG_ROOT, img_size=TARGET_SIZE, is_train=True)
+    print(f"Loading Data from {IMG_ROOTS}...")
+    dataset = CausalDataset(CSV_PATH, IMG_ROOTS, img_size=TARGET_SIZE, is_train=True)
     
     if len(dataset) == 0:
         print("Error: 데이터셋 찾을 수 없음")
@@ -50,18 +49,33 @@ def main():
     
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
+    best_loss = float('inf') 
+
     print("Starting Training...")
     for epoch in range(EPOCHS):
+        # 1. 학습 진행
         loss = train_one_epoch(model, loader, optimizer, DEVICE)
+        
+        # 2. 로그 출력
         if (epoch+1) % 10 == 0:
             print(f"Epoch {epoch+1}/{EPOCHS} | Loss: {loss:.4f}")
 
-    torch.save(model.state_dict(), "./checkpoints/causal_model.pth")
-    print("Training Done.")
+        # 3. Best Model 저장
+        if loss < best_loss:
+            best_loss = loss
+            torch.save(model.state_dict(), "./checkpoints/causal_model_best.pth")
 
+    # 4. 마지막 모델도 저장
+    torch.save(model.state_dict(), "./checkpoints/causal_model_final.pth")
+    print(f"Training Done. Best Loss: {best_loss:.4f}")
+
+    # Best Model 사용
+    print("Loading Best Model for Analysis...")
+    model.load_state_dict(torch.load("./checkpoints/causal_model_best.pth"))
+    
     run_sensitivity_analysis(
         model, dataset.num_groups, dataset.m_cols, DEVICE, 
-        "/results/ranking.csv"
+        "./results/ranking.csv"
     )
 
 if __name__ == "__main__":

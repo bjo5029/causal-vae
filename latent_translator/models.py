@@ -1,8 +1,8 @@
+# models.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
-
 
 class ResBlock(nn.Module):
     def __init__(self, channels):
@@ -18,16 +18,11 @@ class ResBlock(nn.Module):
     def forward(self, x):
         return x + self.conv(x)
 
-
 class ViTBlock(nn.Module):
-    """Standard Transformer Encoder Block"""
-
     def __init__(self, dim, heads, mlp_dim, dropout=0.1):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
-        self.attn = nn.MultiheadAttention(
-            embed_dim=dim, num_heads=heads, dropout=dropout, batch_first=True
-        )
+        self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads, dropout=dropout, batch_first=True)
         self.norm2 = nn.LayerNorm(dim)
         self.mlp = nn.Sequential(
             nn.Linear(dim, mlp_dim),
@@ -38,21 +33,16 @@ class ViTBlock(nn.Module):
         )
 
     def forward(self, x):
-        # Self-Attention
-        qkv = self.norm1(x)
-        attn_out, _ = self.attn(qkv, qkv, qkv)
-        x = x + attn_out
-        # Feed Forward
+        x = x + self.attn(self.norm1(x), self.norm1(x), self.norm1(x))[0]
         x = x + self.mlp(self.norm2(x))
         return x
-
 
 class ViTVAE(nn.Module):
     def __init__(
         self,
         in_channels=1,
-        latent_dim=128,
-        img_size=(768, 1280),
+        latent_dim=512,
+        img_size=(384, 640),
         patch_size=32,
         embed_dim=256,
         depth=6,
@@ -66,117 +56,58 @@ class ViTVAE(nn.Module):
         self.img_height, self.img_width = img_size
         self.patch_size = patch_size
 
-        # ========================
-        # 1. Hybrid Stem (CNN Feature Extractor)
-        # ========================
-        # Patch Size 32만큼 Downsampling 수행 (Stride 2 * 2 * 2 * 2 * 2 = 32)
-        # H: 768 -> 24, W: 1280 -> 40
+        # 1. Stem (5단계 Downsampling -> Stride 32)
+        # 384->12, 640->20
         self.stem = nn.Sequential(
-            nn.Conv2d(in_channels, 32, kernel_size=3, stride=2, padding=1),  # /2
-            nn.BatchNorm2d(32),
-            nn.LeakyReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # /4
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),  # /8
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(),
-            nn.Conv2d(128, embed_dim, kernel_size=3, stride=2, padding=1),  # /16
-            nn.BatchNorm2d(embed_dim),
-            nn.LeakyReLU(),
-            nn.Conv2d(embed_dim, embed_dim, kernel_size=3, stride=2, padding=1),  # /32
-            nn.BatchNorm2d(embed_dim),
-            nn.LeakyReLU(),
+            nn.Conv2d(in_channels, 32, 3, 2, 1), nn.BatchNorm2d(32), nn.LeakyReLU(),   # /2
+            nn.Conv2d(32, 64, 3, 2, 1), nn.BatchNorm2d(64), nn.LeakyReLU(),           # /4
+            nn.Conv2d(64, 128, 3, 2, 1), nn.BatchNorm2d(128), nn.LeakyReLU(),         # /8
+            nn.Conv2d(128, embed_dim, 3, 2, 1), nn.BatchNorm2d(embed_dim), nn.LeakyReLU(), # /16
+            nn.Conv2d(embed_dim, embed_dim, 3, 2, 1), nn.BatchNorm2d(embed_dim), nn.LeakyReLU(), # /32
         )
 
-        # Stem 이후의 Grid Size 계산
-        self.grid_h = self.img_height // 32  # 24
-        self.grid_w = self.img_width // 32  # 40
+        self.grid_h = self.img_height // 32
+        self.grid_w = self.img_width // 32
         self.num_patches = self.grid_h * self.grid_w
 
-        # ========================
-        # 2. Transformer Encoder
-        # ========================
-        self.pos_embedding = nn.Parameter(
-            torch.randn(1, self.num_patches + 1, embed_dim)
-        )
+        # 2. Transformer
+        self.pos_embedding = nn.Parameter(torch.randn(1, self.num_patches + 1, embed_dim))
         self.cls_token = nn.Parameter(torch.randn(1, 1, embed_dim))
         self.dropout = nn.Dropout(0.1)
+        self.transformer = nn.Sequential(*[ViTBlock(embed_dim, heads, mlp_dim) for _ in range(depth)])
 
-        self.transformer = nn.Sequential(
-            *[ViTBlock(embed_dim, heads, mlp_dim) for _ in range(depth)]
-        )
-
-        # Latent Projection
         self.to_latent = nn.LayerNorm(embed_dim)
         self.fc_mu = nn.Linear(embed_dim, latent_dim)
         self.fc_var = nn.Linear(embed_dim, latent_dim)
 
-        # ========================
-        # 3. Decoder (CNN Based)
-        # ========================
-        # Latent -> Initial Spatial Map
-        self.decoder_input = nn.Linear(
-            latent_dim, embed_dim * self.grid_h * self.grid_w
-        )
+        # 3. Decoder
+        self.decoder_input = nn.Linear(latent_dim, embed_dim * self.grid_h * self.grid_w)
 
-        # Upsampling Layers (Mirroring the Stem)
         self.decoder = nn.Sequential(
-            # Input: (B, embed_dim, 24, 40)
-            nn.ConvTranspose2d(
-                embed_dim, 128, kernel_size=3, stride=2, padding=1, output_padding=1
-            ),  # x2 -> 48, 80
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(),
-            ResBlock(128),
-            nn.ConvTranspose2d(
-                128, 64, kernel_size=3, stride=2, padding=1, output_padding=1
-            ),  # x4 -> 96, 160
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(),
-            ResBlock(64),
-            nn.ConvTranspose2d(
-                64, 32, kernel_size=3, stride=2, padding=1, output_padding=1
-            ),  # x8 -> 192, 320
-            nn.BatchNorm2d(32),
-            nn.LeakyReLU(),
-            ResBlock(32),
-            nn.ConvTranspose2d(
-                32, 16, kernel_size=3, stride=2, padding=1, output_padding=1
-            ),  # x16 -> 384, 640
-            nn.BatchNorm2d(16),
-            nn.LeakyReLU(),
-            nn.ConvTranspose2d(
-                16, 16, kernel_size=3, stride=2, padding=1, output_padding=1
-            ),  # x32 -> 768, 1280
-            nn.BatchNorm2d(16),
-            nn.LeakyReLU(),
-            nn.Conv2d(16, in_channels, kernel_size=3, padding=1),
-            # nn.Sigmoid() # MSE Loss를 위해 Sigmoid 제거 (기존 코드 유지)
+            nn.ConvTranspose2d(embed_dim, 128, 3, 2, 1, 1), nn.BatchNorm2d(128), nn.LeakyReLU(), ResBlock(128), # x2
+            nn.ConvTranspose2d(128, 64, 3, 2, 1, 1), nn.BatchNorm2d(64), nn.LeakyReLU(), ResBlock(64),          # x4
+            nn.ConvTranspose2d(64, 32, 3, 2, 1, 1), nn.BatchNorm2d(32), nn.LeakyReLU(), ResBlock(32),           # x8
+            nn.ConvTranspose2d(32, 16, 3, 2, 1, 1), nn.BatchNorm2d(16), nn.LeakyReLU(), ResBlock(16),           # x16
+            nn.ConvTranspose2d(16, 16, 3, 2, 1, 1), nn.BatchNorm2d(16), nn.LeakyReLU(),                         # x32
+            nn.Conv2d(16, in_channels, 3, 1, 1),
         )
 
     def encode(self, x):
-        # 1. Stem (CNN)
-        x = self.stem(x)  # (B, embed_dim, H/32, W/32)
-
-        # 2. Flatten & Add Position Embedding
-        # (B, C, H, W) -> (B, H*W, C)
+        x = self.stem(x)
         x = rearrange(x, "b c h w -> b (h w) c")
         b, n, _ = x.shape
-
         cls_tokens = repeat(self.cls_token, "1 1 d -> b 1 d", b=b)
         x = torch.cat((cls_tokens, x), dim=1)
-        x += self.pos_embedding[:, : (n + 1)]
+        # Pos Embedding 크기가 안 맞으면 자동으로 자르거나 보간해서 더함 (Safety)
+        if x.shape[1] != self.pos_embedding.shape[1]:
+             # 임시 처리: 그냥 앞부분만 잘라서 씀 (어차피 main.py에서 보간해서 넣어줌)
+             x += self.pos_embedding[:, :x.shape[1]]
+        else:
+             x += self.pos_embedding
         x = self.dropout(x)
-
-        # 3. Transformer
         x = self.transformer(x)
-
-        # 4. Latent (Use CLS token)
         cls_out = self.to_latent(x[:, 0])
-        mu = self.fc_mu(cls_out)
-        log_var = self.fc_var(cls_out)
-        return mu, log_var
+        return self.fc_mu(cls_out), self.fc_var(cls_out)
 
     def reparameterize(self, mu, log_var):
         std = torch.exp(0.5 * log_var)
@@ -184,16 +115,13 @@ class ViTVAE(nn.Module):
         return mu + eps * std
 
     def decode(self, z):
-        # Project back to spatial dimensions
         result = self.decoder_input(z)
         result = result.view(-1, self.embed_dim, self.grid_h, self.grid_w)
-
-        # CNN Upsampling
-        result = self.decoder(result)
-        return result
+        return self.decoder(result)
 
     def forward(self, input):
         mu, log_var = self.encode(input)
         z = self.reparameterize(mu, log_var)
         recons = self.decode(z)
         return recons, input, mu, log_var
+    

@@ -1,56 +1,60 @@
-# utils.py
 import os
 import numpy as np
 import torch
 import pandas as pd
+import tifffile
+import random
 
 def set_seed(seed: int) -> None:
+    random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 def safe_mkdir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
-def infer_image_path(row: pd.Series, image_root: str, ext: str) -> str:
-    plate = str(row["Plate"])
-    well = str(row["Well"])
-    img_id = str(row["Image ID"])
-    fname = f"{well}-{img_id}.{ext}"
-    return os.path.join(image_root, plate, well, fname)
-
 def load_image_any(path: str) -> np.ndarray:
     """
-    이미지를 float32 numpy array로 로드.
+    3D Tiff 이미지를 읽어서 2D MIP로 변환하고 Float32로 반환
     """
-    ext = os.path.splitext(path)[1].lower()
-
-    if ext == ".npy":
-        arr = np.load(path)
-        return arr.astype(np.float32)
-
     try:
-        if ext in [".tif", ".tiff"]:
-            import tifffile
+        # 1. 파일 로딩
+        if path.lower().endswith(('.tif', '.tiff')):
             arr = tifffile.imread(path)
-            return arr.astype(np.float32)
+        elif path.lower().endswith('.npy'):
+            arr = np.load(path)
         else:
             import imageio.v2 as imageio
             arr = imageio.imread(path)
-            return arr.astype(np.float32)
+            
+        # 2. 3D -> 2D MIP (Max Intensity Projection)
+        if arr.ndim == 3:
+            arr = np.max(arr, axis=0)
+            
+        return arr.astype(np.float32)
+        
     except Exception as e:
-        raise RuntimeError(f"Failed to load image: {path} ({e})")
+        print(f"Error loading {path}: {e}")
+        # 에러 방지용 더미 이미지 (검은색)
+        return np.zeros((100, 100), dtype=np.float32)
 
 def normalize_image(arr: np.ndarray, clip_percentile: float = 99.5) -> np.ndarray:
-    x = arr
-    if x.ndim == 3 and x.shape[-1] in (1, 3, 4):  # (H,W,C)
-        x = np.transpose(x, (2, 0, 1))  # (C,H,W)
-    elif x.ndim == 2:
-        x = x[None, ...]  # (1,H,W)
+    """
+    Robust Min-Max Normalization -> Tensor 변환
+    """
+    if arr.size == 0: return torch.zeros(1, 10, 10)
 
-    x = x.astype(np.float32)
-    hi = np.percentile(x, clip_percentile)
-    if hi <= 0:
-        hi = float(np.max(x)) if np.max(x) > 0 else 1.0
-    x = np.clip(x, 0, hi) / hi
-    return x
+    # 1. Clip outliers
+    vmin, vmax = np.percentile(arr, [100 - clip_percentile, clip_percentile])
+    arr = np.clip(arr, vmin, vmax)
+    
+    # 2. Scale [0, 1]
+    denom = vmax - vmin
+    if denom == 0: denom = 1e-5
+    arr = (arr - vmin) / denom
+    
+    # 3. To Tensor (C, H, W)
+    tensor = torch.from_numpy(arr).float().unsqueeze(0)
+    return tensor

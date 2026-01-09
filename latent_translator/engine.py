@@ -42,7 +42,7 @@ def extract_vit_latents(model, loader: DataLoader, device: str) -> np.ndarray:
     """
     model.eval()
     zs = []
-    # print("Extracting latents...") # 로그 많으면 주석 처리하기
+    # print("Extracting latents...") # 로그 많아서 주석 처리
     for batch in loader:
         x = batch["x"].to(device)
         # ViTVAE는 encode() 메서드를 사용

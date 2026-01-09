@@ -24,4 +24,4 @@ wandb/
 refs/
 *.txt
 checkpoints/
-results/
+*results/

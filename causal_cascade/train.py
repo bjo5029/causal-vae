@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-def loss_function(recon_x, x, m_hat, m, mu, logvar, gamma=20.0):
+def loss_function(recon_x, x, m_hat, m, mu, logvar, gamma=2000.0):
     # 1. Image Reconstruction Loss (MSE)
     recon_loss = F.mse_loss(recon_x, x, reduction='sum')
     
