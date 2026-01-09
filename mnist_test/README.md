@@ -247,5 +247,4 @@ Ultimately, this can be used to backtrack and explain which morphological featur
 
 ### 5.2. All Intervention Results (10×10)
 
-* [https://docs.google.com/spreadsheets/d/1NoSNkZSo4ofDntrEURkl87T-Kkzod4qLiVnNIlGhntQ/edit?usp=sharing](https://docs.google.com/spreadsheets/d/1NoSNkZSo4ofDntrEURkl87T-Kkzod4qLiVnNIlGhntQ/edit?usp=sharing)
-
+[All Intervention Results](outputs/all_intervention_results.csv)
