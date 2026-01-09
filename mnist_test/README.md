@@ -64,7 +64,7 @@ The decoder works in two steps.
 
 $$
 L_{Total} = L_{Recon} + \beta \times L_{KLD} + L_{Morph}
-$$ㄴ
+$$
 
 * **Reconstruction Loss**
   Minimizes the difference between input X and the reconstructed X′.
