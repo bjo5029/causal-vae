@@ -23,8 +23,9 @@ def export_intervention_csv_10x10(model, digit_samples, save_path="intervention_
             x, m, t = x.to(CONFIG["DEVICE"]), m.to(CONFIG["DEVICE"]), t.to(CONFIG["DEVICE"])
             original_m_np = m.cpu().numpy()[0]
             
-            x_flat = x.view(x.size(0), -1)
-            mu, _ = model.encoder(torch.cat([x_flat, m, t], dim=1)).chunk(2, dim=1)
+            x_feat = model.enc_conv(x)
+            enc_input = torch.cat([x_feat, m, t], dim=1)
+            mu, _ = model.enc_fc(enc_input).chunk(2, dim=1)
             
             for target_digit in range(10):
                 t_fake = torch.zeros(1, 10).to(CONFIG["DEVICE"])
@@ -63,8 +64,9 @@ def visualize_intervention_grid_with_original(model, digit_samples, save_path="i
             x, m, t = digit_samples[source_digit]
             x, m, t = x.to(CONFIG["DEVICE"]), m.to(CONFIG["DEVICE"]), t.to(CONFIG["DEVICE"])
             
-            x_flat = x.view(x.size(0), -1)
-            mu, _ = model.encoder(torch.cat([x_flat, m, t], dim=1)).chunk(2, dim=1)
+            x_feat = model.enc_conv(x)
+            enc_input = torch.cat([x_feat, m, t], dim=1)
+            mu, _ = model.enc_fc(enc_input).chunk(2, dim=1)
             z_fixed = mu
             
             # [Column 0] 원본
@@ -82,7 +84,9 @@ def visualize_intervention_grid_with_original(model, digit_samples, save_path="i
                 
                 m_hat = model.morph_predictor(t_fake)
                 dec_input = torch.cat([m_hat, z_fixed], dim=1)
-                recon_x = model.decoder(dec_input)
+                h = model.dec_fc(dec_input)
+                h = h.view(-1, 64, 7, 7)
+                recon_x = model.dec_conv(h)
                 
                 ax = axes[row_idx, i+1]
                 ax.imshow(recon_x.cpu().view(28, 28), cmap='gray')
@@ -108,9 +112,9 @@ def visualize_z_clustering(model, save_path="z_tsne_plot.png"):
     with torch.no_grad():
         for x, m, t in test_loader:
             x, m, t = x.to(CONFIG["DEVICE"]), m.to(CONFIG["DEVICE"]), t.to(CONFIG["DEVICE"])
-            x_flat = x.view(x.size(0), -1)
-            enc_input = torch.cat([x_flat, m, t], dim=1)
-            mu, _ = model.encoder(enc_input).chunk(2, dim=1)
+            x_feat = model.enc_conv(x)
+            enc_input = torch.cat([x_feat, m, t], dim=1)
+            mu, _ = model.enc_fc(enc_input).chunk(2, dim=1)
             z_list.append(mu.cpu().numpy())
             label_list.append(torch.argmax(t, dim=1).cpu().numpy())
             
@@ -146,9 +150,9 @@ def verify_visualization(model):
     with torch.no_grad():
         for x, m, t in test_loader:
             x, m, t = x.to(CONFIG["DEVICE"]), m.to(CONFIG["DEVICE"]), t.to(CONFIG["DEVICE"])
-            x_flat = x.view(x.size(0), -1)
-            enc_input = torch.cat([x_flat, m, t], dim=1)
-            mu, _ = model.encoder(enc_input).chunk(2, dim=1)
+            x_feat = model.enc_conv(x)
+            enc_input = torch.cat([x_feat, m, t], dim=1)
+            mu, _ = model.enc_fc(enc_input).chunk(2, dim=1)
             z_list.append(mu.cpu().numpy())
             label_list.append(torch.argmax(t, dim=1).cpu().numpy())
             
@@ -222,8 +226,9 @@ def validate_and_analyze_outliers(vae_model, classifier, device):
             images_list.append(x.cpu())
             
             # (B) Fake Image
-            x_flat = x.view(x.size(0), -1)
-            mu, _ = vae_model.encoder(torch.cat([x_flat, m, t], dim=1)).chunk(2, dim=1)
+            x_feat = vae_model.enc_conv(x)
+            enc_input = torch.cat([x_feat, m, t], dim=1)
+            mu, _ = vae_model.enc_fc(enc_input).chunk(2, dim=1)
             z_fixed = mu
             
             for target_digit in range(10):
@@ -232,7 +237,9 @@ def validate_and_analyze_outliers(vae_model, classifier, device):
                 
                 m_hat = vae_model.morph_predictor(t_fake)
                 dec_input = torch.cat([m_hat, z_fixed], dim=1)
-                recon_x = vae_model.decoder(dec_input)
+                h = vae_model.dec_fc(dec_input)
+                h = h.view(-1, 64, 7, 7)
+                recon_x = vae_model.dec_conv(h)
                 recon_x_img = recon_x.view(1, 1, 28, 28)
                 
                 fake_feat, _ = classifier(recon_x_img)
