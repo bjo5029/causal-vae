@@ -8,7 +8,7 @@ CONFIG = {
     "EPOCHS": 30,
     "LR": 1e-3,
     "Z_DIM": 10,
-    "M_DIM": 16, 
+    "M_DIM": 12, 
     "T_DIM": 10,
     "DEVICE": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     "SEED": 42,
@@ -17,7 +17,7 @@ CONFIG = {
 }
 
 FEATURE_NAMES = [
-    "Area", "Thickness", "Solidity", "AspectRatio", "Euler", 
-    "H_Symmetry", "V_Symmetry", "Endpoints", "Junctions",
-    "Hu1", "Hu2", "Hu3", "Hu4", "Hu5", "Hu6", "Hu7"
+    "Area", "Perimeter", "Thickness", "MajorAxis", "Eccentricity", 
+    "Orientation", "Solidity", "Extent", "AspectRatio", "Euler", 
+    "H_Symmetry", "V_Symmetry"
 ]
