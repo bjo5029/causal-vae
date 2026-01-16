@@ -50,6 +50,17 @@ This directory contains experiments validating a Causal VAE model structure usin
 - **Phase 1 (Prediction)**: Represents **"Numerical Mean"** (preserving statistical rates). Good for population trends.
 - **Phase 2 (Measurement)**: Represents **"Structural Mode"** (preserving physical constraints). Good for identifying essential shapes and global coherence (hu moments, solidity).
 
+### `05_feature_analysis/`
+**Objective**: Causal validation and quantitative feature contribution analysis
+
+**Key Experiments**:
+1. **Causal Validation (DoWhy)**: Robustness checks (RCC, Placebo) to verify T→M causality.
+2. **Generative Contribution**: Quantifying visual impact of M vs Z using counterfactuals.
+
+**Key Concepts**:
+- **Visual Efficiency**: Discrepancy between numerical shift and visual impact (e.g., Extent has high visual impact despite small numerical change).
+- **Contribution Decomposition**: Decomposing total image change into Explainable (M) vs Unexplained (Z) parts.
+
 ## Documentation
 
 The detailed reports for each experiment phase are organized in `docs/`:
@@ -58,3 +69,4 @@ The detailed reports for each experiment phase are organized in `docs/`:
 - [02. Mechanism Analysis](./docs/02_mechanism_analysis.md)
 - [03. Measurement Approach](./docs/03_measurement_approach.md)
 - [04. Phase Comparison](./docs/04_phase_comparison.md)
+- [05. Feature Analysis](./docs/05_feature_analysis.md)
