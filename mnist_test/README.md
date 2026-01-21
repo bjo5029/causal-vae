@@ -61,6 +61,18 @@ This directory contains experiments validating a Causal VAE model structure usin
 - **Visual Efficiency**: Discrepancy between numerical shift and visual impact (e.g., Extent has high visual impact despite small numerical change).
 - **Contribution Decomposition**: Decomposing total image change into Explainable (M) vs Unexplained (Z) parts.
 
+### `06_model_experiment/`
+**Objective**: Improve model reliability by quantifying uncertainty and verifying feature completeness.
+
+**Key Experiments**:
+1. **Bayesian Uncertainty (Experiment A)**:
+   - Modified MorphPredictor to output Mean($\mu$) and Variance($\sigma^2$) using Gaussian NLL.
+   - **Finding**: Uncertainty correctly reflects data ambiguity (e.g., High uncertainty for Euler number in digit '6' due to loop variations).
+
+2. **Information Completeness (Experiment B)**:
+   - Quantified "Hidden Features" by comparing reconstruction loss of $M \to X$ vs $(M,T) \to X$.
+   - **Finding**: Current Morphological features ($M$) explain **~78%** of the information; remaining **~22%** represents undefined hidden features.
+
 ## Documentation
 
 The detailed reports for each experiment phase are organized in `docs/`:
@@ -70,3 +82,4 @@ The detailed reports for each experiment phase are organized in `docs/`:
 - [03. Measurement Approach](./docs/03_measurement_approach.md)
 - [04. Phase Comparison](./docs/04_phase_comparison.md)
 - [05. Feature Analysis](./docs/05_feature_analysis.md)
+- [06. Model Experiment](./docs/06_model_experiment.md)
