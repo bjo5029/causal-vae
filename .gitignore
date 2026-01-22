@@ -24,6 +24,6 @@ wandb/
 refs/
 *.txt
 checkpoints/
-*results/
-saved_models/
+*results*/
+saved_models*/
 temp/

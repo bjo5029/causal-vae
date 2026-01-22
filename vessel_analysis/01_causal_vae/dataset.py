@@ -124,36 +124,36 @@ class VesselDataset(Dataset):
         
         if self.train:
             self.indices = indices[:split_point]
-            print(f"[Dataset] Training Set: {len(self.indices)} samples")
+            print(f"[Dataset] Training Set: {len(self.indices)} samples (Before Augmentation)")
+            # 4x Expansion logic is in __len__ and __getitem__
         else:
             self.indices = indices[split_point:]
             print(f"[Dataset] Validation Set: {len(self.indices)} samples")
             
         self.data_source = [temp_data[i] for i in self.indices]
 
-        # 5. Transforms
+        # 5. Base Transforms (Resize Only)
         self.img_h = CONFIG["IMG_HEIGHT"]
         self.img_w = CONFIG["IMG_WIDTH"]
         
-        if self.train:
-            self.transform = transforms.Compose([
-                transforms.Resize((self.img_h, self.img_w), antialias=True),
-                transforms.RandomHorizontalFlip(p=0.5), # Left-Right Mirror
-                transforms.RandomVerticalFlip(p=0.5),   # Up-Down Mirror
-                transforms.RandomRotation(degrees=180), # Rotate +/- 180 (Full rotation)
-                # transforms.ToTensor() moved to manual
-            ])
-        else:
-            self.transform = transforms.Compose([
-                transforms.Resize((self.img_h, self.img_w), antialias=True),
-                # transforms.ToTensor(),
-            ])
+        # We only use Resize here. Flip/Rotate is handled manually in __getitem__
+        self.base_transform = transforms.Resize((self.img_h, self.img_w), antialias=True)
 
     def __len__(self):
-        return len(self.data_source)
+        if self.train:
+            return len(self.data_source) * 4 # 4x Augmentation (Org, H, V, HV)
+        else:
+            return len(self.data_source)
 
     def __getitem__(self, idx):
-        item = self.data_source[idx]
+        if self.train:
+            real_idx = idx // 4
+            aug_mode = idx % 4
+        else:
+            real_idx = idx
+            aug_mode = 0 # No augmentation for val
+            
+        item = self.data_source[real_idx]
         
         # Load Image using tifffile (Handle float32 correctly)
         try:
@@ -162,27 +162,35 @@ class VesselDataset(Dataset):
             # Fallback to PIL if tifffile misses
             img = np.array(Image.open(item['path']))
         
-        # Normalize to [0, 1] per image
-        if img.max() > img.min():
-            img = (img - img.min()) / (img.max() - img.min())
-        else:
-            img = np.zeros_like(img)
-            
+        
         # Convert to Tensor (1, H, W)
         img_tensor = torch.from_numpy(img).float()
         if img_tensor.ndim == 2:
                 img_tensor = img_tensor.unsqueeze(0)
         
+        # Apply Base Transform (Resize)
+        img_tensor = self.base_transform(img_tensor)
+        
+        # Apply Deterministic Augmentation
+        if aug_mode == 1:
+            img_tensor = transforms.functional.hflip(img_tensor)
+        elif aug_mode == 2:
+            img_tensor = transforms.functional.vflip(img_tensor)
+        elif aug_mode == 3:
+            # 180 Rotation = HFlip + VFlip
+            img_tensor = transforms.functional.hflip(img_tensor)
+            img_tensor = transforms.functional.vflip(img_tensor)
+
+        # Normalize to [0, 1] per image
+        if img_tensor.max() > img_tensor.min():
+            img_tensor = (img_tensor - img_tensor.min()) / (img_tensor.max() - img_tensor.min())
+        else:
+            img_tensor = torch.zeros_like(img_tensor)
+
         # Binarize (Simple Adaptive Threshold)
-        # Reference used fixed threshold, but for normalized data, dynamic is safer
-        # Keep it continuous 0.0 - 1.0 or Hard Binary 0.0 / 1.0?
-        # User said "Binarize", assuming Hard Binary.
+        # We do this LAST to ensure we have clear 0/1 structure even after interpolation
         threshold = img_tensor.mean() 
         img_tensor = (img_tensor > threshold).float()
-            
-        # Apply Geometric Transforms
-        if self.transform:
-            img_tensor = self.transform(img_tensor)
         
         # Prepare M
         m_tensor = torch.tensor(item['m_norm'], dtype=torch.float32)

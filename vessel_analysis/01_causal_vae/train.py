@@ -7,7 +7,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from dataset import VesselDataset
-from models import CausalVesselVAE, LatentDiscriminator
+from models import CausalVesselVAE, LatentDiscriminator, PhikonLoss
 from config import CONFIG
 import numpy as np
 
@@ -17,15 +17,24 @@ def loss_function(recon_x, x, m_hat, m, mu, logvar, m_mu, m_logvar):
     # x is [0, 1] (Binarized)
     
     # Calculate pixel-wise loss (no reduction yet)
-    bce = F.binary_cross_entropy(recon_x, x, reduction='none')
+    # bce = F.binary_cross_entropy(recon_x, x, reduction='none')
     
-    # Weight: 5.0 for Vessel(1), 1.0 for Background(0)
-    # Reduced from 20.0 to avoid "all white" output
-    pos_weight = 2.0
+    # Switch to MSE for Pretrained ViT VAE (which uses Linear Output)
+    mse = F.mse_loss(recon_x, x, reduction='none')
+
+    # Dynamic Weighting for Class Imbalance
+    with torch.no_grad():
+        n_pos = x.sum()
+        n_total = x.numel()
+        pos_fraction = n_pos / (n_total + 1e-6)
+        # Balance influence: pos_weight * pos_frac = 1 * (1 - pos_frac)
+        calculated_weight = (1.0 - pos_fraction) / (pos_fraction + 1e-6)
+        pos_weight = torch.clamp(calculated_weight, min=1.0, max=50.0)
+    
     weight = 1.0 + (pos_weight - 1.0) * x
     
     # Weighted Mean/Sum
-    recon_loss = torch.sum(bce * weight) 
+    recon_loss = torch.sum(mse * weight) 
     
     # 2. KLD Loss (Z)
     kld_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
@@ -40,25 +49,18 @@ def loss_function(recon_x, x, m_hat, m, mu, logvar, m_mu, m_logvar):
     morph_loss = 0.5 * torch.sum(m_logvar + m_error / m_var)
     
     return recon_loss, kld_loss, morph_loss
-    
-    # Debug NaN
-    if torch.isnan(recon_loss) or torch.isnan(kld_loss) or torch.isnan(morph_loss):
-        print(f"[DEBUG] Loss NaN Detected!")
-        print(f"Recon: {recon_loss.item()}, KLD: {kld_loss.item()}, Morph: {morph_loss.item()}")
-        print(f"Mu max: {mu.max().item()}, Logvar max: {logvar.max().item()}")
-        print(f"M_Mu max: {m_mu.max().item()}, M_Logvar max: {m_logvar.max().item()}")
-        
-    return recon_loss, kld_loss, morph_loss
 
-def train_one_epoch(epoch, vae, discriminator, train_loader, opt_vae, opt_d):
+def train_one_epoch(epoch, vae, discriminator, phikon_loss_fn, train_loader, opt_vae, opt_d):
     vae.train()
     discriminator.train()
+    phikon_loss_fn.eval() # Always eval
     
     total_loss = 0
     total_recon = 0
     total_kld = 0
     total_morph = 0
     total_adv = 0
+    total_phikon = 0
     
     for batch_idx, (x, m, t) in enumerate(train_loader):
         x = x.to(CONFIG["DEVICE"])
@@ -90,7 +92,10 @@ def train_one_epoch(epoch, vae, discriminator, train_loader, opt_vae, opt_d):
         target_uniform = torch.full_like(d_logits_fake, 1.0 / CONFIG["T_DIM"])
         loss_adv = F.kl_div(F.log_softmax(d_logits_fake, dim=1), target_uniform, reduction='batchmean') * CONFIG["LAMBDA_ADV"] * 100
         
-        loss = recon + CONFIG["BETA"] * kld + morph + loss_adv
+        # Phikon Perceptual Loss
+        p_loss = phikon_loss_fn(recon_x, x)
+        
+        loss = recon + CONFIG["BETA"] * kld + morph + loss_adv + CONFIG["LAMBDA_PHIKON"] * p_loss
         
         loss.backward()
         torch.nn.utils.clip_grad_norm_(vae.parameters(), max_norm=5.0) # Clip Gradients
@@ -98,6 +103,9 @@ def train_one_epoch(epoch, vae, discriminator, train_loader, opt_vae, opt_d):
         
         total_loss += loss.item()
         total_recon += recon.item()
+        total_phikon += p_loss.item()
+        total_kld += kld.item()
+        total_morph += morph.item()
         total_kld += kld.item()
         total_morph += morph.item()
         total_adv += loss_adv.item()
@@ -105,15 +113,18 @@ def train_one_epoch(epoch, vae, discriminator, train_loader, opt_vae, opt_d):
         if batch_idx % 5 == 0:
              print(f"   Batch {batch_idx}/{len(train_loader)} | Loss: {loss.item() / x.size(0):.4f}")
         
-    avg_loss = total_loss / len(train_loader.dataset)
-    return avg_loss
+    dataset_size = len(train_loader.dataset)
+    print(f"   [Train Breakdown] Recon: {total_recon/dataset_size:.1f} | Phikon: {total_phikon/dataset_size:.1f} | KLD: {total_kld/dataset_size:.1f}")
+    return total_loss / dataset_size
 
-def validate(vae, val_loader):
+def validate(vae, val_loader, phikon_loss_fn):
     vae.eval()
-    total_loss = 0
+    phikon_loss_fn.eval()
+    val_loss = 0
     total_recon = 0
     total_kld = 0
     total_morph = 0
+    total_phikon = 0
     with torch.no_grad():
         for x, m, t in val_loader:
             x = x.to(CONFIG["DEVICE"])
@@ -123,24 +134,28 @@ def validate(vae, val_loader):
             recon_x, m_hat, mu, logvar, m_mu, m_logvar = vae(x, m, t)
             recon, kld, morph = loss_function(recon_x, x, m_hat, m, mu, logvar, m_mu, m_logvar)
             
-            loss = recon + CONFIG["BETA"] * kld + morph
+            # Note: Usually, VGG or adversarial losses are not included in validation metrics
+            # unless necessary for model selection.
+            # However, to keep consistency with the training loss setup,
+            # only Recon / KLD / Morph losses are tracked here
+            p_loss = phikon_loss_fn(recon_x, x)
             
-            if torch.isnan(loss):
-                 print(f"[VAL DEBUG] Batch Loss is NaN")
-                 break
-            total_loss += loss.item()
+            loss = recon + CONFIG["BETA"] * kld + morph + CONFIG["LAMBDA_PHIKON"] * p_loss
+            val_loss += loss.item()
+            
             total_recon += recon.item()
             total_kld += kld.item()
             total_morph += morph.item()
+            total_phikon += p_loss.item()
             
-    avg_loss = total_loss / len(val_loader.dataset)
     avg_recon = total_recon / len(val_loader.dataset)
     avg_kld = total_kld / len(val_loader.dataset)
     avg_morph = total_morph / len(val_loader.dataset)
+    avg_phikon = total_phikon / len(val_loader.dataset)
     
-    print(f"   [Val Breakdown] Recon: {avg_recon:.1f} | KLD: {avg_kld:.1f} | Morph: {avg_morph:.1f}")
+    print(f"   [Val Breakdown] Recon: {avg_recon:.1f} | Phikon: {avg_phikon:.1f} | KLD: {avg_kld:.1f} | Morph: {avg_morph:.1f}")
     
-    return avg_loss
+    return val_loss / len(val_loader.dataset)
 
 def main():
     os.makedirs(CONFIG["SAVE_DIR"], exist_ok=True)
@@ -154,8 +169,13 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=CONFIG["BATCH_SIZE"], shuffle=False, num_workers=4)
     
     # Model
-    vae = CausalVesselVAE().to(CONFIG["DEVICE"])
+    # vae = CausalVesselVAE().to(CONFIG["DEVICE"])
+    from models import CausalViTVAE
+    pretrained_path = "/home/jeongeun.baek/workspace/causal-vae/saved_models/vit_vae_epoch_470.pth"
+    vae = CausalViTVAE(pretrained_path=pretrained_path).to(CONFIG["DEVICE"])
+    
     discriminator = LatentDiscriminator().to(CONFIG["DEVICE"])
+    phikon_loss = PhikonLoss().to(CONFIG["DEVICE"])
     
     opt_vae = optim.Adam(vae.parameters(), lr=CONFIG["LEARNING_RATE"])
     opt_d = optim.Adam(discriminator.parameters(), lr=CONFIG["LEARNING_RATE"])
@@ -164,9 +184,9 @@ def main():
     
     print(f"Start Training: Epochs={CONFIG['EPOCHS']}, Batch={CONFIG['BATCH_SIZE']}, Image={CONFIG['IMG_HEIGHT']}x{CONFIG['IMG_WIDTH']}")
     
-    for epoch in range(1, CONFIG["EPOCHS"] + 1):
-        train_loss = train_one_epoch(epoch, vae, discriminator, train_loader, opt_vae, opt_d)
-        val_loss = validate(vae, val_loader)
+    for epoch in range(CONFIG["EPOCHS"]):
+        train_loss = train_one_epoch(epoch, vae, discriminator, phikon_loss, train_loader, opt_vae, opt_d)
+        val_loss = validate(vae, val_loader, phikon_loss)
         
         print(f"Epoch {epoch} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
         
@@ -178,8 +198,8 @@ def main():
             torch.save(vae.state_dict(), save_path)
             print(f" -> Best model saved to {save_path}")
             
-        # Optional: Save sample reconstruction every 10 epochs
-        if epoch % 10 == 0:
+        # Optional: Save sample reconstruction every 50 epochs
+        if epoch % 50 == 0:
             with torch.no_grad():
                 x, m, t = next(iter(val_loader))
                 x = x.to(CONFIG["DEVICE"])
