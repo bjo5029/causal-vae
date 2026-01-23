@@ -34,7 +34,12 @@ def loss_function(recon_x, x, m_hat, m, mu, logvar, m_mu, m_logvar):
     weight = 1.0 + (pos_weight - 1.0) * x
     
     # Weighted Mean/Sum
-    recon_loss = torch.sum(mse * weight) 
+    recon_loss = torch.sum(mse * weight)
+    
+    # 1b. Sparsity Loss - Suppress background noise
+    # Penalize non-zero values where original is 0 (background)
+    background_mask = (x < 0.1).float()  # Background pixels
+    sparsity_loss = torch.sum(torch.abs(recon_x) * background_mask) 
     
     # 2. KLD Loss (Z)
     kld_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
@@ -48,7 +53,7 @@ def loss_function(recon_x, x, m_hat, m, mu, logvar, m_mu, m_logvar):
     m_var = torch.exp(m_logvar)
     morph_loss = 0.5 * torch.sum(m_logvar + m_error / m_var)
     
-    return recon_loss, kld_loss, morph_loss
+    return recon_loss, kld_loss, morph_loss, sparsity_loss
 
 def train_one_epoch(epoch, vae, discriminator, phikon_loss_fn, train_loader, opt_vae, opt_d):
     vae.train()
@@ -83,7 +88,7 @@ def train_one_epoch(epoch, vae, discriminator, phikon_loss_fn, train_loader, opt
         opt_vae.zero_grad()
         recon_x, m_hat, mu, logvar, m_mu, m_logvar = vae(x, m, t)
         
-        recon, kld, morph = loss_function(recon_x, x, m_hat, m, mu, logvar, m_mu, m_logvar)
+        recon, kld, morph, sparsity = loss_function(recon_x, x, m_hat, m, mu, logvar, m_mu, m_logvar)
         
         # Adversarial Loss (Fool discriminator)
         z_sample = vae.reparameterize(mu, logvar)
@@ -95,7 +100,7 @@ def train_one_epoch(epoch, vae, discriminator, phikon_loss_fn, train_loader, opt
         # Phikon Perceptual Loss
         p_loss = phikon_loss_fn(recon_x, x)
         
-        loss = recon + CONFIG["BETA"] * kld + morph + loss_adv + CONFIG["LAMBDA_PHIKON"] * p_loss
+        loss = recon + CONFIG["BETA"] * kld + morph + loss_adv + CONFIG["LAMBDA_PHIKON"] * p_loss + 0.3 * sparsity
         
         loss.backward()
         torch.nn.utils.clip_grad_norm_(vae.parameters(), max_norm=5.0) # Clip Gradients
@@ -132,7 +137,7 @@ def validate(vae, val_loader, phikon_loss_fn):
             t = t.to(CONFIG["DEVICE"])
             
             recon_x, m_hat, mu, logvar, m_mu, m_logvar = vae(x, m, t)
-            recon, kld, morph = loss_function(recon_x, x, m_hat, m, mu, logvar, m_mu, m_logvar)
+            recon, kld, morph, sparsity = loss_function(recon_x, x, m_hat, m, mu, logvar, m_mu, m_logvar)
             
             # Note: Usually, VGG or adversarial losses are not included in validation metrics
             # unless necessary for model selection.
@@ -140,7 +145,7 @@ def validate(vae, val_loader, phikon_loss_fn):
             # only Recon / KLD / Morph losses are tracked here
             p_loss = phikon_loss_fn(recon_x, x)
             
-            loss = recon + CONFIG["BETA"] * kld + morph + CONFIG["LAMBDA_PHIKON"] * p_loss
+            loss = recon + CONFIG["BETA"] * kld + morph + CONFIG["LAMBDA_PHIKON"] * p_loss + 0.3 * sparsity
             val_loss += loss.item()
             
             total_recon += recon.item()

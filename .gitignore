@@ -23,8 +23,8 @@ wandb/
 
 refs/
 *.txt
-checkpoints/
+*checkpoints*/
 *results*/
-saved_models*/
+*saved_models*/
 temp/
 *.log
