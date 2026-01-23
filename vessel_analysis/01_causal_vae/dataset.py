@@ -18,10 +18,15 @@ class VesselDataset(Dataset):
     - Loads Images on demand (to save RAM)
     - Resizes to (H, W) defined in CONFIG
     """
-    def __init__(self, train=True, transform=None):
+    def __init__(self, mode='train', transform=None):
+        """
+        Args:
+            mode: 'train', 'val', or 'test'
+        """
         self.csv_path = CONFIG["DATA_CSV"]
         self.data_root = CONFIG["DATA_ROOT"]
-        self.train = train
+        self.mode = mode
+        self.train = (mode == 'train')  # For backward compatibility
         
         # 1. Load CSV
         print(f"[Dataset] Loading CSV: {self.csv_path}")
@@ -116,19 +121,55 @@ class VesselDataset(Dataset):
         for i, item in enumerate(temp_data):
             item['m_norm'] = self.norm_m[i]
             
-        # 4. Train/Val Split (80/20) based on simple indexing for now
-        # Or random split
+        # 4. Train/Val/Test Split with Stratified Sampling by Group
+        # Each group contributes: 1 sample to val, 1 to test, rest to train
         np.random.seed(42)
-        indices = np.random.permutation(len(temp_data))
-        split_point = int(len(temp_data) * 0.8)
         
-        if self.train:
-            self.indices = indices[:split_point]
+        # Group samples by their condition (t_idx)
+        from collections import defaultdict
+        groups_dict = defaultdict(list)
+        for i, item in enumerate(temp_data):
+            groups_dict[item['t']].append(i)
+        
+        train_indices = []
+        val_indices = []
+        test_indices = []
+        
+        # Split each group: 1 val, 1 test, rest train
+        for group_id, group_indices in groups_dict.items():
+            n_samples = len(group_indices)
+            np.random.shuffle(group_indices)  # Shuffle within group
+            
+            if n_samples < 3:
+                print(f"[Warning] Group {group_id} has only {n_samples} samples. Skipping test split for this group.")
+                if n_samples >= 2:
+                    val_indices.append(group_indices[0])
+                    train_indices.extend(group_indices[1:])
+                elif n_samples == 1:
+                    train_indices.append(group_indices[0])
+            else:
+                # 1 for val, 1 for test, rest for train
+                val_indices.append(group_indices[0])
+                test_indices.append(group_indices[1])
+                train_indices.extend(group_indices[2:])
+        
+        # Shuffle the combined indices to mix groups
+        np.random.shuffle(train_indices)
+        np.random.shuffle(val_indices)
+        np.random.shuffle(test_indices)
+        
+        if self.mode == 'train':
+            self.indices = train_indices
             print(f"[Dataset] Training Set: {len(self.indices)} samples (Before Augmentation)")
-            # 4x Expansion logic is in __len__ and __getitem__
-        else:
-            self.indices = indices[split_point:]
+            print(f"[Dataset] Stratified by {len(groups_dict)} groups (1 val + 1 test per group)")
+        elif self.mode == 'val':
+            self.indices = val_indices
             print(f"[Dataset] Validation Set: {len(self.indices)} samples")
+            print(f"[Dataset] 1 sample per group from {len(groups_dict)} groups")
+        elif self.mode == 'test':
+            self.indices = test_indices
+            print(f"[Dataset] Test Set: {len(self.indices)} samples")
+            print(f"[Dataset] 1 sample per group from {len(groups_dict)} groups")
             
         self.data_source = [temp_data[i] for i in self.indices]
 

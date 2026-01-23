@@ -26,7 +26,7 @@ class Config:
         # 4. Paths
         self.DATA_CSV = "../../data/vessel_analysis_result.csv"
         self.DATA_ROOT = "../../data/mip_imgs_plates_25250-25254" # Where Plate-* folders are
-        self.SAVE_DIR = "saved_models_test"
-        self.RESULT_DIR = "results_test"
+        self.SAVE_DIR = "saved_models"
+        self.RESULT_DIR = "results"
 
 CONFIG = Config().__dict__

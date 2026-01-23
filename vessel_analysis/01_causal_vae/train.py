@@ -162,8 +162,8 @@ def main():
     os.makedirs(CONFIG["RESULT_DIR"], exist_ok=True)
     
     # Dataset
-    train_dataset = VesselDataset(train=True)
-    val_dataset = VesselDataset(train=False)
+    train_dataset = VesselDataset(mode='train')
+    val_dataset = VesselDataset(mode='val')
     
     train_loader = DataLoader(train_dataset, batch_size=CONFIG["BATCH_SIZE"], shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=CONFIG["BATCH_SIZE"], shuffle=False, num_workers=4)
@@ -197,6 +197,18 @@ def main():
             save_path = os.path.join(CONFIG["SAVE_DIR"], model_name)
             torch.save(vae.state_dict(), save_path)
             print(f" -> Best model saved to {save_path}")
+        
+        # Save Latest Model (every epoch)
+        latest_model_name = f"model_ep{CONFIG['EPOCHS']}_bs{CONFIG['BATCH_SIZE']}_lr{CONFIG['LEARNING_RATE']}_beta{CONFIG['BETA']}_lam{CONFIG['LAMBDA_ADV']}_latest.pt"
+        latest_save_path = os.path.join(CONFIG["SAVE_DIR"], latest_model_name)
+        torch.save(vae.state_dict(), latest_save_path)
+        
+        # Save Checkpoint every 50 epochs
+        if epoch % 50 == 0 and epoch > 0:
+            checkpoint_name = f"model_ep{CONFIG['EPOCHS']}_bs{CONFIG['BATCH_SIZE']}_lr{CONFIG['LEARNING_RATE']}_beta{CONFIG['BETA']}_lam{CONFIG['LAMBDA_ADV']}_epoch{epoch}.pt"
+            checkpoint_path = os.path.join(CONFIG["SAVE_DIR"], checkpoint_name)
+            torch.save(vae.state_dict(), checkpoint_path)
+            print(f" -> Checkpoint saved to {checkpoint_path}")
             
         # Optional: Save sample reconstruction every 50 epochs
         if epoch % 50 == 0:

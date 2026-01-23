@@ -27,3 +27,4 @@ checkpoints/
 *results*/
 saved_models*/
 temp/
+*.log

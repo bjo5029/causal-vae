@@ -270,9 +270,9 @@ class CausalViTVAE(nn.Module):
         
         if pretrained_path:
             print(f"[CausalViTVAE] Loading backbone weights from {pretrained_path}")
-            state_dict = torch.load(pretrained_path)
+            state_dict = torch.load(pretrained_path, map_location=CONFIG["DEVICE"])
             self.backbone.load_state_dict(state_dict, strict=False)
-            
+    
             # Optional: Freeze Backbone
             # for param in self.backbone.parameters():
             #     param.requires_grad = False
