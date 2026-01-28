@@ -158,10 +158,13 @@ class VesselDataset(Dataset):
         np.random.shuffle(val_indices)
         np.random.shuffle(test_indices)
         
-        if self.mode == 'train':
+        if self.mode == 'all':
+            # K-Fold CV: Return ALL data without splitting
+            self.indices = list(range(len(temp_data)))
+            print(f"[Dataset] All Data: {len(self.indices)} samples (for K-Fold CV)")
+        elif self.mode == 'train':
             self.indices = train_indices
             print(f"[Dataset] Training Set: {len(self.indices)} samples (Before Augmentation)")
-            print(f"[Dataset] Stratified by {len(groups_dict)} groups (1 val + 1 test per group)")
         elif self.mode == 'val':
             self.indices = val_indices
             print(f"[Dataset] Validation Set: {len(self.indices)} samples")

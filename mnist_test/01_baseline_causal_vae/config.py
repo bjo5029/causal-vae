@@ -5,7 +5,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 CONFIG = {
     "BATCH_SIZE": 128,
-    "EPOCHS": 30,
+    "EPOCHS": 100,
     "LR": 1e-3,
     "Z_DIM": 10,
     "M_DIM": 12, 

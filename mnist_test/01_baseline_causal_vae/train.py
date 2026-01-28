@@ -94,6 +94,12 @@ def train_model():
             
         print(f"Epoch {epoch+1:02d} | Avg Loss: {total_loss/len(train_dataset):.1f} | M-Loss: {total_m_loss/len(train_dataset):.2f} | D-Loss: {total_d_loss/len(train_loader):.4f} | Adv-Loss: {total_adv_loss/len(train_dataset):.2f}")
         
+    import os
+    os.makedirs("results", exist_ok=True)
+    save_path = "results/model_final.pt"
+    torch.save(vae.state_dict(), save_path)
+    print(f"\n[Train] Model saved to {save_path}")
+    
     return vae
 
 def train_external_classifier(device):

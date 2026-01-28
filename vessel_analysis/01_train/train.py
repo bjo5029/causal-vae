@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '00_core')))
+
 import os
 import torch
 import torch.optim as optim
@@ -7,7 +11,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from dataset import VesselDataset
-from models import CausalVesselVAE, LatentDiscriminator, PhikonLoss
+from models import CausalVesselVAE
 from config import CONFIG
 import numpy as np
 
@@ -55,17 +59,13 @@ def loss_function(recon_x, x, m_hat, m, mu, logvar, m_mu, m_logvar):
     
     return recon_loss, kld_loss, morph_loss, sparsity_loss
 
-def train_one_epoch(epoch, vae, discriminator, phikon_loss_fn, train_loader, opt_vae, opt_d):
+def train_one_epoch(epoch, vae, train_loader, opt_vae):
     vae.train()
-    discriminator.train()
-    phikon_loss_fn.eval() # Always eval
     
     total_loss = 0
     total_recon = 0
     total_kld = 0
     total_morph = 0
-    total_adv = 0
-    total_phikon = 0
     
     for batch_idx, (x, m, t) in enumerate(train_loader):
         x = x.to(CONFIG["DEVICE"])
@@ -73,34 +73,13 @@ def train_one_epoch(epoch, vae, discriminator, phikon_loss_fn, train_loader, opt
         t = t.to(CONFIG["DEVICE"])
         t_indices = torch.argmax(t, dim=1)
         
-        # --- Train Discriminator ---
-        opt_d.zero_grad()
-        with torch.no_grad():
-            _, _, mu, logvar, _, _ = vae(x, m, t)
-            z = vae.reparameterize(mu, logvar).detach()
-        d_logits = discriminator(z)
-        loss_d = F.cross_entropy(d_logits, t_indices)
-        loss_d.backward()
-        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=5.0) # Clip Gradients
-        opt_d.step()
-        
         # --- Train VAE ---
         opt_vae.zero_grad()
         recon_x, m_hat, mu, logvar, m_mu, m_logvar = vae(x, m, t)
         
         recon, kld, morph, sparsity = loss_function(recon_x, x, m_hat, m, mu, logvar, m_mu, m_logvar)
         
-        # Adversarial Loss (Fool discriminator)
-        z_sample = vae.reparameterize(mu, logvar)
-        d_logits_fake = discriminator(z_sample)
-        # Target: Uniform distribution (confusion)
-        target_uniform = torch.full_like(d_logits_fake, 1.0 / CONFIG["T_DIM"])
-        loss_adv = F.kl_div(F.log_softmax(d_logits_fake, dim=1), target_uniform, reduction='batchmean') * CONFIG["LAMBDA_ADV"] * 100
-        
-        # Phikon Perceptual Loss
-        p_loss = phikon_loss_fn(recon_x, x)
-        
-        loss = recon + CONFIG["BETA"] * kld + morph + loss_adv + CONFIG["LAMBDA_PHIKON"] * p_loss + 0.3 * sparsity
+        loss = recon + CONFIG["BETA"] * kld + morph + 0.3 * sparsity
         
         loss.backward()
         torch.nn.utils.clip_grad_norm_(vae.parameters(), max_norm=5.0) # Clip Gradients
@@ -108,28 +87,22 @@ def train_one_epoch(epoch, vae, discriminator, phikon_loss_fn, train_loader, opt
         
         total_loss += loss.item()
         total_recon += recon.item()
-        total_phikon += p_loss.item()
         total_kld += kld.item()
         total_morph += morph.item()
-        total_kld += kld.item()
-        total_morph += morph.item()
-        total_adv += loss_adv.item()
         
         if batch_idx % 5 == 0:
              print(f"   Batch {batch_idx}/{len(train_loader)} | Loss: {loss.item() / x.size(0):.4f}")
         
     dataset_size = len(train_loader.dataset)
-    print(f"   [Train Breakdown] Recon: {total_recon/dataset_size:.1f} | Phikon: {total_phikon/dataset_size:.1f} | KLD: {total_kld/dataset_size:.1f}")
+    print(f"   [Train Breakdown] Recon: {total_recon/dataset_size:.1f} | KLD: {total_kld/dataset_size:.1f}")
     return total_loss / dataset_size
 
-def validate(vae, val_loader, phikon_loss_fn):
+def validate(vae, val_loader):
     vae.eval()
-    phikon_loss_fn.eval()
     val_loss = 0
     total_recon = 0
     total_kld = 0
     total_morph = 0
-    total_phikon = 0
     with torch.no_grad():
         for x, m, t in val_loader:
             x = x.to(CONFIG["DEVICE"])
@@ -143,22 +116,19 @@ def validate(vae, val_loader, phikon_loss_fn):
             # unless necessary for model selection.
             # However, to keep consistency with the training loss setup,
             # only Recon / KLD / Morph losses are tracked here
-            p_loss = phikon_loss_fn(recon_x, x)
             
-            loss = recon + CONFIG["BETA"] * kld + morph + CONFIG["LAMBDA_PHIKON"] * p_loss + 0.3 * sparsity
+            loss = recon + CONFIG["BETA"] * kld + morph + 0.3 * sparsity
             val_loss += loss.item()
             
             total_recon += recon.item()
             total_kld += kld.item()
             total_morph += morph.item()
-            total_phikon += p_loss.item()
             
     avg_recon = total_recon / len(val_loader.dataset)
     avg_kld = total_kld / len(val_loader.dataset)
     avg_morph = total_morph / len(val_loader.dataset)
-    avg_phikon = total_phikon / len(val_loader.dataset)
     
-    print(f"   [Val Breakdown] Recon: {avg_recon:.1f} | Phikon: {avg_phikon:.1f} | KLD: {avg_kld:.1f} | Morph: {avg_morph:.1f}")
+    print(f"   [Val Breakdown] Recon: {avg_recon:.1f} | KLD: {avg_kld:.1f} | Morph: {avg_morph:.1f}")
     
     return val_loss / len(val_loader.dataset)
 
@@ -179,38 +149,34 @@ def main():
     pretrained_path = "/home/jeongeun.baek/workspace/causal-vae/saved_models/vit_vae_epoch_470.pth"
     vae = CausalViTVAE(pretrained_path=pretrained_path).to(CONFIG["DEVICE"])
     
-    discriminator = LatentDiscriminator().to(CONFIG["DEVICE"])
-    phikon_loss = PhikonLoss().to(CONFIG["DEVICE"])
-    
     opt_vae = optim.Adam(vae.parameters(), lr=CONFIG["LEARNING_RATE"])
-    opt_d = optim.Adam(discriminator.parameters(), lr=CONFIG["LEARNING_RATE"])
     
     best_val_loss = float('inf')
     
     print(f"Start Training: Epochs={CONFIG['EPOCHS']}, Batch={CONFIG['BATCH_SIZE']}, Image={CONFIG['IMG_HEIGHT']}x{CONFIG['IMG_WIDTH']}")
     
     for epoch in range(CONFIG["EPOCHS"]):
-        train_loss = train_one_epoch(epoch, vae, discriminator, phikon_loss, train_loader, opt_vae, opt_d)
-        val_loss = validate(vae, val_loader, phikon_loss)
+        train_loss = train_one_epoch(epoch, vae, train_loader, opt_vae)
+        val_loss = validate(vae, val_loader)
         
         print(f"Epoch {epoch} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
         
         # Save Best Model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            model_name = f"model_ep{CONFIG['EPOCHS']}_bs{CONFIG['BATCH_SIZE']}_lr{CONFIG['LEARNING_RATE']}_beta{CONFIG['BETA']}_lam{CONFIG['LAMBDA_ADV']}_best.pt"
+            model_name = f"model_ep{CONFIG['EPOCHS']}_bs{CONFIG['BATCH_SIZE']}_lr{CONFIG['LEARNING_RATE']}_beta{CONFIG['BETA']}_best.pt"
             save_path = os.path.join(CONFIG["SAVE_DIR"], model_name)
             torch.save(vae.state_dict(), save_path)
             print(f" -> Best model saved to {save_path}")
         
         # Save Latest Model (every epoch)
-        latest_model_name = f"model_ep{CONFIG['EPOCHS']}_bs{CONFIG['BATCH_SIZE']}_lr{CONFIG['LEARNING_RATE']}_beta{CONFIG['BETA']}_lam{CONFIG['LAMBDA_ADV']}_latest.pt"
+        latest_model_name = f"model_ep{CONFIG['EPOCHS']}_bs{CONFIG['BATCH_SIZE']}_lr{CONFIG['LEARNING_RATE']}_beta{CONFIG['BETA']}_latest.pt"
         latest_save_path = os.path.join(CONFIG["SAVE_DIR"], latest_model_name)
         torch.save(vae.state_dict(), latest_save_path)
         
         # Save Checkpoint every 50 epochs
         if epoch % 50 == 0 and epoch > 0:
-            checkpoint_name = f"model_ep{CONFIG['EPOCHS']}_bs{CONFIG['BATCH_SIZE']}_lr{CONFIG['LEARNING_RATE']}_beta{CONFIG['BETA']}_lam{CONFIG['LAMBDA_ADV']}_epoch{epoch}.pt"
+            checkpoint_name = f"model_ep{CONFIG['EPOCHS']}_bs{CONFIG['BATCH_SIZE']}_lr{CONFIG['LEARNING_RATE']}_beta{CONFIG['BETA']}_epoch{epoch}.pt"
             checkpoint_path = os.path.join(CONFIG["SAVE_DIR"], checkpoint_name)
             torch.save(vae.state_dict(), checkpoint_path)
             print(f" -> Checkpoint saved to {checkpoint_path}")

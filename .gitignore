@@ -28,3 +28,4 @@ refs/
 *saved_models*/
 temp/
 *.log
+*outputs*/

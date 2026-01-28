@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
-from transformers import AutoImageProcessor, AutoModel
+import torch.nn.functional as F
+import torchvision
 from config import CONFIG
 
 class CausalVesselVAE(nn.Module):
@@ -164,76 +165,7 @@ class CausalVesselVAE(nn.Module):
         
         return recon_x, m_hat, mu, logvar, m_mu, m_logvar
 
-class LatentDiscriminator(nn.Module):
-    """
-    Discriminator for Adversarial Training (matching Z prior)
-    """
-    def __init__(self):
-        super().__init__()
-        self.z_dim = CONFIG["Z_DIM"]
-        self.t_dim = CONFIG["T_DIM"]
-        
-        self.net = nn.Sequential(
-            nn.Linear(self.z_dim, 64),
-            nn.LeakyReLU(0.2),
-            nn.Linear(64, 64),
-            nn.LeakyReLU(0.2),
-            nn.Linear(64, self.t_dim) # Logits
-        )
-        
-    def forward(self, z):
-        return self.net(z)
 
-class PhikonLoss(nn.Module):
-    """
-    Phikon Perceptual Loss (Histology ViT) with Random Cropping
-    """
-    def __init__(self):
-        super().__init__()
-        # Load Phikon (owkin/phikon)
-        self.processor = AutoImageProcessor.from_pretrained("owkin/phikon")
-        self.model = AutoModel.from_pretrained("owkin/phikon")
-        self.model.eval()
-        
-        # Freeze parameters
-        for param in self.model.parameters():
-            param.requires_grad = False
-            
-        # Normalization (ImageNet stats as per Phikon docs)
-        self.register_buffer("mean", torch.tensor(self.processor.image_mean).view(1, 3, 1, 1))
-        self.register_buffer("std", torch.tensor(self.processor.image_std).view(1, 3, 1, 1))
-        
-        self.crop_size = 224
-
-    def forward(self, input, target):
-        # Input/Target: [B, 1, H, W]
-        B, C, H, W = input.shape
-        
-        # 1. Random Crop (Same coords for both)
-        # Handle edge case where H or W < 224 (Unlikely given 768x1280)
-        top = torch.randint(0, H - self.crop_size + 1, (1,)).item()
-        left = torch.randint(0, W - self.crop_size + 1, (1,)).item()
-        
-        input_crop = input[:, :, top:top+self.crop_size, left:left+self.crop_size]
-        target_crop = target[:, :, top:top+self.crop_size, left:left+self.crop_size]
-        
-        # 2. To 3 Channels (Repeat)
-        x = input_crop.repeat(1, 3, 1, 1)
-        y = target_crop.repeat(1, 3, 1, 1)
-        
-        # 3. Normalize
-        x = (x - self.mean) / self.std
-        y = (y - self.mean) / self.std
-        
-        # 4. Extract Features (spatial patches)
-        # Phikon output: last_hidden_state [B, 197, 768] (CLS + 14x14 patches)
-        # Use patches (1:) to preserve spatial texture info. 
-        # CLS (0) is too global and causes "blobby" artifacts.
-        x_out = self.model(x).last_hidden_state[:, 1:, :]
-        y_out = self.model(y).last_hidden_state[:, 1:, :]
-        
-        # 5. MSE Loss
-        return F.mse_loss(x_out, y_out, reduction='sum')
 
 
 # ==========================================

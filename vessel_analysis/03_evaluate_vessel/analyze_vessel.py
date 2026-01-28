@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '00_core')))
+
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -330,17 +334,17 @@ def main():
     # Run Analyses
     os.makedirs(CONFIG["RESULT_DIR"], exist_ok=True)
     
-    analyze_feature_uncertainty(model, os.path.join(CONFIG["RESULT_DIR"], "uncertainty_map.png"))
-    analyze_feature_importance(model, os.path.join(CONFIG["RESULT_DIR"], "feature_importance.png"))
+    # analyze_feature_uncertainty(model, os.path.join(CONFIG["RESULT_DIR"], "uncertainty_map.png"))
+    # analyze_feature_importance(model, os.path.join(CONFIG["RESULT_DIR"], "feature_importance.png"))
     
-    # Run Pairwise for 0 vs 1
-    # analyze_pairwise_difference(model, 0, 1, os.path.join(CONFIG["RESULT_DIR"], "pairwise_0_vs_1.png"))
+    # # Run Pairwise for 0 vs 1
+    # # analyze_pairwise_difference(model, 0, 1, os.path.join(CONFIG["RESULT_DIR"], "pairwise_0_vs_1.png"))
     
-    # Full Report vs Baseline (0)
-    generate_full_report(model, baseline_idx=0, save_path=os.path.join(CONFIG["RESULT_DIR"], "full_diff_report.csv"))
+    # # Full Report vs Baseline (0)
+    # generate_full_report(model, baseline_idx=0, save_path=os.path.join(CONFIG["RESULT_DIR"], "full_diff_report.csv"))
 
-    # All Pairwise Report (19x19)
-    generate_all_pairwise_report(model, save_path=os.path.join(CONFIG["RESULT_DIR"], "all_pairwise_report.csv"))
+    # # All Pairwise Report (19x19)
+    # generate_all_pairwise_report(model, save_path=os.path.join(CONFIG["RESULT_DIR"], "all_pairwise_report.csv"))
 
     # Reconstruction Quality Verification (Validation Set)
     analyze_reconstruction_quality(model, save_dir=CONFIG["RESULT_DIR"])
